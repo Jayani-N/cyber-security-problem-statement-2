@@ -53,26 +53,26 @@ Our implementation:
 
 #IDPS
 
-import pandas as pd
+      import pandas as pd
+      
+      import pyshark
+      
+      from sklearn.ensemble import IsolationForest
+      
+      from sklearn.preprocessing import StandardScaler
+      
+      from datetime import datetime
+      
+      import pickle
+      
+      import numpy as np
 
-import pyshark
-
-from sklearn.ensemble import IsolationForest
-
-from sklearn.preprocessing import StandardScaler
-
-from datetime import datetime
-
-import pickle
-
-import numpy as np
-
-# Step 1: Capture Network Traffic using PyShark
-def capture_packets(interface='wlan0', timeout=10):
-    # List to store packet information
-    data = []
-    capture = pyshark.LiveCapture(interface=interface)
-    capture.sniff(timeout=timeout)
+      # Step 1: Capture Network Traffic using PyShark
+      def capture_packets(interface='wlan0', timeout=10):
+          # List to store packet information
+          data = []
+          capture = pyshark.LiveCapture(interface=interface)
+          capture.sniff(timeout=timeout)
 
     # Extract relevant features from each packet
     for packet in capture:
@@ -101,11 +101,11 @@ def capture_packets(interface='wlan0', timeout=10):
     print(f'Captured data:\n{df.head()}')
     return df
 
-# Step 2: Aggregate Traffic Data
-def aggregate_data(df):
-    # Convert timestamp to datetime and set as index for resampling
-    df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='s')
-    df.set_index('Timestamp', inplace=True)
+      # Step 2: Aggregate Traffic Data
+      def aggregate_data(df):
+          # Convert timestamp to datetime and set as index for resampling
+          df['Timestamp'] = pd.to_datetime(df['Timestamp'], unit='s')
+          df.set_index('Timestamp', inplace=True)
 
     # Resample data every 1 second and calculate statistics
     aggregated_df = df.resample('1S').agg({
@@ -120,10 +120,10 @@ def aggregate_data(df):
     print(f"Aggregated data:\n{aggregated_df.head()}")
     return aggregated_df
 
-# Step 3: Train Anomaly Detection Model (Isolation Forest)
-def train_anomaly_detection_model(data):
-    # Select only numerical columns for model training
-    data_for_training = data[['Total_Bytes', 'Unique_Src_IPs', 'Unique_Dst_IPs']]
+      # Step 3: Train Anomaly Detection Model (Isolation Forest)
+      def train_anomaly_detection_model(data):
+          # Select only numerical columns for model training
+          data_for_training = data[['Total_Bytes', 'Unique_Src_IPs', 'Unique_Dst_IPs']]
     
     # Initialize the scaler and isolation forest model
     scaler = StandardScaler()
@@ -140,10 +140,10 @@ def train_anomaly_detection_model(data):
         pickle.dump((model, scaler), file)
     print("Model and scaler saved as 'anomaly_detection_model.pkl'")
 
-# Step 4: Detect Anomalies
-def detect_anomalies(new_data):
-    # Select only numerical columns for anomaly detection
-    new_data_for_detection = new_data[['Total_Bytes', 'Unique_Src_IPs', 'Unique_Dst_IPs']]
+      # Step 4: Detect Anomalies
+      def detect_anomalies(new_data):
+          # Select only numerical columns for anomaly detection
+          new_data_for_detection = new_data[['Total_Bytes', 'Unique_Src_IPs', 'Unique_Dst_IPs']]
     
     # Load the model and scaler
     with open('anomaly_detection_model.pkl', 'rb') as file:
@@ -160,11 +160,11 @@ def detect_anomalies(new_data):
     new_data['Anomaly'] = anomalies
     return new_data
 
-# Main Execution
-if _name_ == "_main_":
-    try:
-        # Step 1: Capture network packets
-        raw_data = capture_packets(interface='wlan0', timeout=10)
+      # Main Execution
+      if _name_ == "_main_":
+          try:
+              # Step 1: Capture network packets
+              raw_data = capture_packets(interface='wlan0', timeout=10)
         
         # Step 2: Aggregate captured data
         aggregated_data = aggregate_data(raw_data)
@@ -186,19 +186,19 @@ if _name_ == "_main_":
 
 # Detection of anomalies
 
-import pandas as pd
-
-import pyshark
-
-from sklearn.ensemble import IsolationForest
-
-from sklearn.preprocessing import StandardScaler
-
-from datetime import datetime
-
-import pickle
-
-import numpy as np
+      import pandas as pd
+      
+      import pyshark
+      
+      from sklearn.ensemble import IsolationForest
+      
+      from sklearn.preprocessing import StandardScaler
+      
+      from datetime import datetime
+      
+      import pickle
+      
+      import numpy as np
 
       # Step 1: Capture Network Traffic using PyShark
       def capture_packets(interface='wlan0', timeout=10):
