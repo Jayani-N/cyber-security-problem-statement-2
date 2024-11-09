@@ -37,7 +37,17 @@ Step 5: Alerting users using push notifications when detecting an unauthorized a
 
 # Output Screenshots
 
-![img1](https://github.com/user-attachments/assets/406286ba-0928-4aa5-bdbb-22b8822e4054)
+![img1](https://github.com/user-attachments/assets/b78cca5f-88df-44e2-873f-f8422b6c1345)
+
+![img2](https://github.com/user-attachments/assets/5bca5795-5ed8-4016-9f3a-7ce69d9ea60a)
+
+![img3](https://github.com/user-attachments/assets/222c427f-208e-40f1-bb22-21784038c211)
+
+
+
+
+
+
 
 
 
