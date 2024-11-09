@@ -1,0 +1,222 @@
+import subprocess
+import re
+import time
+from datetime import datetime
+from collections import defaultdict
+import logging
+from sklearn.ensemble import IsolationForest
+import numpy as np
+import argparse
+
+# Log file for network activity
+LOG_FILE = "network_activity.log"
+
+# Regular expressions to extract MAC addresses, IP addresses, and frames
+mac_regex = re.compile(r"([0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5})")  # Ensures only MAC addresses are captured
+ip_regex = re.compile(r"(\d{1,3}\.){3}\d{1,3}")
+deauth_regex = re.compile(r"Deauthentication frame")
+arp_request_regex = re.compile(r"ARP.*Request.*who-has")  # To detect MITM attempts
+ssid_regex = re.compile(r"SSID: ([^\s]+)")
+
+# Dictionary to keep track of traffic counts per IP and MAC for DoS detection
+traffic_monitor = defaultdict(int)
+dos_monitor = defaultdict(int)  # Monitor traffic from MAC addresses to detect DoS
+interval_traffic_data = []  # List to store traffic for dynamic threshold calculation
+blocked_ips = {}  # To track blocked IPs with unblock time
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
+
+def log_activity(message, level=logging.INFO):
+    """Log activity with a timestamp to a log file and print to console."""
+    logging.log(level, message)
+
+def send_popup_notification(title, message):
+    """Send a system pop-up notification."""
+    try:
+        subprocess.run(["notify-send", title, message], check=True)
+        log_activity(f"Popup notification sent: {title} - {message}", level=logging.INFO)
+    except subprocess.CalledProcessError as e:
+        log_activity(f"Failed to send pop-up notification: {e}", level=logging.ERROR)
+
+def block_ip(ip_address, block_duration=600):
+    """Block an IP address temporarily."""
+    try:
+        subprocess.run(["sudo", "iptables", "-A", "INPUT", "-s", ip_address, "-j", "DROP"], check=True)
+        log_activity(f"Blocked IP address {ip_address} for {block_duration} seconds", level=logging.WARNING)
+        blocked_ips[ip_address] = time.time() + block_duration  # Store unblock time
+    except subprocess.CalledProcessError as e:
+        log_activity(f"Failed to block IP {ip_address}: {e}", level=logging.ERROR)
+
+def unblock_ip():
+    """Unblock IPs after the block duration has passed."""
+    current_time = time.time()
+    for ip, unblock_time in list(blocked_ips.items()):
+        if current_time >= unblock_time:
+            try:
+                subprocess.run(["sudo", "iptables", "-D", "INPUT", "-s", ip, "-j", "DROP"], check=True)
+                log_activity(f"Unblocked IP address {ip}", level=logging.INFO)
+                del blocked_ips[ip]  # Remove from blocked list
+            except subprocess.CalledProcessError as e:
+                log_activity(f"Failed to unblock IP {ip}: {e}", level=logging.ERROR)
+
+def train_anomaly_detection_model(training_data):
+    """Train the machine learning anomaly detection model."""
+    model = IsolationForest(contamination=0.1)  # Example using IsolationForest
+    model.fit(training_data)  # Train with the traffic data
+    return model
+
+def analyze_traffic_with_ml(ip_src, traffic_data, model, traffic_threshold):
+    """Check if traffic from an IP source exceeds threshold and is anomalous using ML."""
+    traffic_monitor[ip_src] += 1
+    if traffic_monitor[ip_src] > traffic_threshold:
+        # Prepare the traffic feature for the ML model
+        traffic_features = np.array([[traffic_monitor[ip_src]]])  # Example feature: count of packets
+        
+        # Use the trained ML model to detect anomaly
+        is_anomalous = model.predict(traffic_features)  # -1 indicates anomaly, 1 is normal
+        
+        if is_anomalous == -1:
+            message = f"Anomalous traffic detected from IP: {ip_src}"
+            log_activity(message, level=logging.WARNING)
+            send_popup_notification("Anomalous Traffic Detected", message)
+            block_ip(ip_src)  # Block anomalous IP
+
+def detect_rogue_aps(line, authorized_aps):
+    """Detect rogue APs based on unrecognized AP MAC addresses and SSIDs."""
+    ap_match = mac_regex.search(line)
+    ssid_match = ssid_regex.search(line)
+    if ap_match:
+        ap_mac = ap_match.group().lower()  # Normalize to lowercase
+        if ap_mac not in authorized_aps:
+            message = f"Rogue AP detected with MAC: {ap_mac}"
+            log_activity(message, level=logging.WARNING)
+            send_popup_notification("Rogue AP Detected", message)
+
+    if ssid_match:
+        ssid = ssid_match.group(1)
+        message = f"Rogue SSID detected: {ssid}"
+        log_activity(message, level=logging.WARNING)
+        send_popup_notification("Rogue SSID Detected", message)
+
+def detect_deauth_attack(line):
+    """Detect Deauthentication (Deauth) frames."""
+    if deauth_regex.search(line):
+        message = "Deauthentication attack detected"
+        log_activity(message, level=logging.ERROR)
+        send_popup_notification("Deauthentication Attack Detected", message)
+
+def detect_mitm_attack(line):
+    """Detect potential Man-In-the-Middle (MITM) attacks based on ARP requests."""
+    if arp_request_regex.search(line):
+        message = "Potential MITM attack detected via suspicious ARP request"
+        log_activity(message, level=logging.ERROR)
+        send_popup_notification("MITM Attack Detected", message)
+
+def detect_ransomware_activity(line):
+    """Detect ransomware indicators based on unusual file access patterns."""
+    if "encrypt" in line.lower() or "file modification" in line.lower():
+        message = "Suspicious activity detected: Potential ransomware detected"
+        log_activity(message, level=logging.CRITICAL)
+        send_popup_notification("Potential Ransomware Detected", message)
+
+def adjust_traffic_threshold(interval_traffic_data):
+    """Dynamically adjust the traffic threshold based on average traffic in previous intervals."""
+    if interval_traffic_data:
+        avg_traffic = sum(interval_traffic_data) / len(interval_traffic_data)
+        new_threshold = int(avg_traffic * 1.5)
+        log_activity(f"Adjusted traffic threshold to: {new_threshold}", level=logging.INFO)
+        return new_threshold
+    return 100
+
+def monitor_network_with_ml(interface, authorized_macs, authorized_aps, traffic_threshold, dos_threshold, monitor_interval):
+    print("Starting network monitoring with ML anomaly detection...")
+    start_time = time.time()
+
+    # Train the anomaly detection model with historical traffic data
+    # Example: Load or collect training data (this would be done offline)
+    training_data = np.array([[100], [200], [300], [400]])  # Example data
+    model = train_anomaly_detection_model(training_data)
+
+    try:
+        while True:
+            # Capture packets with tcpdump
+            result = subprocess.run(
+                ["sudo", "tcpdump", "-i", interface, "-nn", "-c", "10", "not", "ether", "src", "ff:ff:ff:ff:ff:ff"], 
+                capture_output=True, 
+                text=True
+            )
+            if result.returncode != 0:
+                log_activity("Error running tcpdump", level=logging.ERROR)
+                continue
+
+            lines = result.stdout.splitlines()
+
+            for line in lines:
+                log_activity(f"Processing line: {line}", level=logging.DEBUG)
+                
+                mac_match = mac_regex.search(line)
+                ip_match = ip_regex.search(line)
+                
+                if mac_match:
+                    mac_address = mac_match.group().strip().lower()  # Normalize and strip
+
+                    # Check if MAC is authorized
+                    log_activity(f"Captured MAC address: {mac_address}", level=logging.DEBUG)
+                    if mac_address not in authorized_macs:
+                        message = f"Unauthorized MAC address detected: {mac_address}"
+                        log_activity(message, level=logging.WARNING)
+                        send_popup_notification("Unauthorized MAC Detected", message)
+
+                if ip_match:
+                    ip_src = ip_match.group()
+                    analyze_traffic_with_ml(ip_src, traffic_monitor, model, traffic_threshold)
+
+                detect_rogue_aps(line, authorized_aps)
+                detect_deauth_attack(line)
+                detect_mitm_attack(line)
+                detect_ransomware_activity(line)
+
+            # Adjust traffic threshold dynamically based on recent data
+            interval_traffic_data.append(len(lines))  # Add traffic data for this interval
+            if len(interval_traffic_data) > 5:
+                interval_traffic_data.pop(0)  # Limit to last 5 intervals
+
+            traffic_threshold = adjust_traffic_threshold(interval_traffic_data)
+            unblock_ip()
+
+            time.sleep(monitor_interval)
+
+    except KeyboardInterrupt:
+        log_activity("Network monitoring stopped", level=logging.INFO)
+
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(description="Network Monitoring CLI Tool")
+    
+    # Define arguments
+    parser.add_argument("--authorized-macs", type=str, required=True, help="Comma-separated list of authorized MAC addresses")
+    parser.add_argument("--authorized-aps", type=str, required=True, help="Comma-separated list of authorized AP MAC addresses")
+    parser.add_argument("--traffic-threshold", type=int, default=100, help="Traffic threshold (packets per IP per interval)")
+    parser.add_argument("--dos-threshold", type=int, default=500, help="DoS threshold (packets per MAC)")
+    parser.add_argument("--monitor-interval", type=int, default=10, help="Monitoring interval in seconds")
+    parser.add_argument("--interface", type=str, required=True, help="Network interface to monitor (e.g., wlan0)")
+
+    return parser.parse_args()
+
+# Parse arguments
+args = parse_args()
+
+# Convert comma-separated strings to sets
+authorized_macs = {mac.strip().lower() for mac in args.authorized_macs.split(",")}
+authorized_aps = {ap.strip().lower() for ap in args.authorized_aps.split(",")}
+
+# Start monitoring the network
+monitor_network_with_ml(args.interface, authorized_macs, authorized_aps, args.traffic_threshold, args.dos_threshold, args.monitor_interval)
